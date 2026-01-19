@@ -1,0 +1,10 @@
+{
+  "tryckysrtp.configuration.title": "Tryckys RTP Config",
+  "tryckysrtp.configuration.section.tryckysrtp.common.toml": "Tryckys RTP",
+  "tryckysrtp.configuration.section.tryckysrtp.common.toml.title": "Tryckys RTP",
+
+  "tryckysrtp.configuration.cooldownSeconds": "Cooldown (seconds)",
+  "tryckysrtp.configuration.radiusMin": "Minimum radius",
+  "tryckysrtp.configuration.radiusMax": "Maximum radius",
+  "tryckysrtp.configuration.attemptsMax": "Max attempts"
+}
