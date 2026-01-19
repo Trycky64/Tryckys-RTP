@@ -1,60 +1,99 @@
 package com.trycky.tryckysrtp;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.trycky.tryckysrtp.rtp.RtpSafeTeleport;
+import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 
-/**
- * Brigadier command registration for /rtp.
- */
+import java.time.Duration;
+import java.util.UUID;
+
 public final class RtpCommand {
+
     private RtpCommand() {}
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(
                 Commands.literal("rtp")
-                        // accessible to everyone; ops (permission level 2) bypass cooldown.
+                        .requires(src -> true) // accessible à tous
                         .executes(ctx -> execute(ctx.getSource()))
         );
     }
 
-    private static int execute(CommandSourceStack source) {
-        if (!(source.getEntity() instanceof ServerPlayer player)) {
-            source.sendFailure(Component.translatable("tryckysrtp.rtp.only_players"));
+    private static int execute(CommandSourceStack src) {
+        final ServerPlayer player;
+        try {
+            player = src.getPlayerOrException();
+        } catch (Exception e) {
+            src.sendFailure(Component.translatable("tryckysrtp.rtp.only_players"));
             return 0;
         }
 
-        final boolean bypass = source.hasPermission(2);
+        final ServerLevel level = player.serverLevel();
+
+        // Dimension rules
+        if (!RtpSafeTeleport.isRtpAllowedInDimension(level)) {
+            player.displayClientMessage(Component.translatable("tryckysrtp.rtp.bad_dimension").withStyle(ChatFormatting.RED), false);
+            return 0;
+        }
+
+        // Cooldown: bypass for ops (permission level 2)
+        final boolean bypass = src.hasPermission(2);
+
+        final UUID id = player.getUUID();
         final long now = System.currentTimeMillis();
-        final int cooldownSeconds = RtpConfig.COOLDOWN_SECONDS.get();
+        final long nextAllowed = RtpCooldownData.get(level).getNextAllowedEpochMillis(id);
 
-        final long remainingMillis = RtpCooldowns.tryConsume(player, now, cooldownSeconds, bypass);
-        if (remainingMillis > 0L) {
-            source.sendFailure(Component.translatable(
+        if (!bypass && nextAllowed > now) {
+            final Duration remaining = Duration.ofMillis(nextAllowed - now);
+            player.displayClientMessage(Component.translatable(
                     "tryckysrtp.rtp.cooldown",
-                    formatDuration(remainingMillis)
-            ));
+                    formatDuration(remaining)
+            ).withStyle(ChatFormatting.RED), false);
             return 0;
         }
 
-        // P3 will implement actual safe random teleport.
-        source.sendSuccess(() -> Component.translatable("tryckysrtp.rtp.searching"), false);
-        source.sendSuccess(() -> Component.translatable("tryckysrtp.rtp.not_implemented"), false);
+        player.displayClientMessage(Component.translatable("tryckysrtp.rtp.searching").withStyle(ChatFormatting.YELLOW), false);
+
+        final RtpSafeTeleport.Result result = RtpSafeTeleport.findSafeDestination(level);
+        if (!result.success) {
+            player.displayClientMessage(Component.translatable(result.errorKey).withStyle(ChatFormatting.RED), false);
+            return 0;
+        }
+
+        try {
+            RtpSafeTeleport.teleportPlayer(player, level, result.pos);
+        } catch (Exception ex) {
+            TryckysRTP.LOGGER.error("Teleport failed for {}", player.getGameProfile().getName(), ex);
+            player.displayClientMessage(Component.translatable("tryckysrtp.rtp.teleport_failed").withStyle(ChatFormatting.RED), false);
+            return 0;
+        }
+
+        if (!bypass) {
+            RtpCooldowns.startCooldown(src.getServer(), id);
+        }
+
+        player.displayClientMessage(Component.translatable(
+                "tryckysrtp.rtp.success",
+                result.pos.getX(), result.pos.getY(), result.pos.getZ()
+        ).withStyle(ChatFormatting.GREEN), false);
+
         return 1;
     }
 
-    private static String formatDuration(long millis) {
-        long seconds = millis / 1000L;
-        if (seconds <= 0) return "0s";
+    private static String formatDuration(Duration d) {
+        long seconds = Math.max(0, d.getSeconds());
+        long minutes = seconds / 60;
+        long hours = minutes / 60;
 
-        final long hours = seconds / 3600L;
-        seconds -= hours * 3600L;
-        final long minutes = seconds / 60L;
-        seconds -= minutes * 60L;
+        seconds %= 60;
+        minutes %= 60;
 
-        if (hours > 0) return hours + "h " + minutes + "m";
+        if (hours > 0) return hours + "h " + minutes + "m " + seconds + "s";
         if (minutes > 0) return minutes + "m " + seconds + "s";
         return seconds + "s";
     }

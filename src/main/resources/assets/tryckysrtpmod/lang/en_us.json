@@ -18,5 +18,13 @@
   "tryckysrtp.configuration.avoidLiquids": "Avoid liquids",
   "tryckysrtp.configuration.requireSolidGround": "Require solid ground",
   "tryckysrtp.configuration.safeHeightMode": "Safe height mode",
-  "tryckysrtp.configuration.keepYawPitch": "Keep yaw/pitch"
+  "tryckysrtp.configuration.keepYawPitch": "Keep yaw/pitch",
+
+  "tryckysrtp.rtp.only_players": "Only players can use this command.",
+  "tryckysrtp.rtp.searching": "Searching for a safe spot...",
+  "tryckysrtp.rtp.cooldown": "You must wait %s before using /rtp again.",
+  "tryckysrtp.rtp.bad_dimension": "You cannot use /rtp in this dimension.",
+  "tryckysrtp.rtp.no_safe_spot": "No safe spot found. Try again later or increase attempts/radius.",
+  "tryckysrtp.rtp.teleport_failed": "Teleport failed. Check server logs.",
+  "tryckysrtp.rtp.success": "Teleported to (%s, %s, %s)."
 }

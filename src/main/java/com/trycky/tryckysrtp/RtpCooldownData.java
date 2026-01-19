@@ -1,61 +1,69 @@
 package com.trycky.tryckysrtp;
 
-import com.mojang.serialization.Codec;
-import com.mojang.serialization.codecs.RecordCodecBuilder;
-import net.minecraft.server.MinecraftServer;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.saveddata.SavedData;
-import net.minecraft.world.level.saveddata.SavedDataType;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
+import java.util.UUID;
 
-/**
- * Persistent per-world (Overworld) cooldown storage.
- *
- * Stores a map of player UUID (as String) -> nextAllowedEpochMillis.
- */
 public final class RtpCooldownData extends SavedData {
+
+    private static final String DATA_NAME = TryckysRTP.MODID + "_cooldowns";
+
+    private final Map<String, Long> nextAllowedMillisByUuid = new HashMap<>();
+
+    public RtpCooldownData() {}
+
     /**
-     * SavedData identifier. File path (in world folder) will be:
-     * data/tryckysrtp/rtp_cooldowns.dat
+     * Persist to overworld so cooldown survives dimension changes.
      */
-    public static final SavedDataType<RtpCooldownData> ID = new SavedDataType<>(
-            "tryckysrtp/rtp_cooldowns",
-            RtpCooldownData::new,
-            ctx -> CODEC
-    );
+    public static RtpCooldownData get(ServerLevel anyLevel) {
+        final ServerLevel overworld = anyLevel.getServer().getLevel(Level.OVERWORLD);
+        final ServerLevel storageLevel = (overworld != null) ? overworld : anyLevel;
 
-    private static final Codec<RtpCooldownData> CODEC = RecordCodecBuilder.create(instance -> instance
-            .group(
-                    Codec.unboundedMap(Codec.STRING, Codec.LONG)
-                            .fieldOf("cooldowns")
-                            .forGetter(sd -> sd.cooldowns)
-            )
-            .apply(instance, RtpCooldownData::new)
-    );
-
-    private final Map<String, Long> cooldowns;
-
-    public RtpCooldownData() {
-        this(new HashMap<>());
+        return storageLevel.getDataStorage().computeIfAbsent(
+                new SavedData.Factory<>(
+                        RtpCooldownData::new,
+                        RtpCooldownData::load
+                ),
+                DATA_NAME
+        );
     }
 
-    private RtpCooldownData(Map<String, Long> cooldowns) {
-        this.cooldowns = new HashMap<>(Objects.requireNonNull(cooldowns));
+    public long getNextAllowedEpochMillis(UUID uuid) {
+        return nextAllowedMillisByUuid.getOrDefault(uuid.toString(), 0L);
     }
 
-    public static RtpCooldownData get(MinecraftServer server) {
-        // Attach to overworld for "global" server data.
-        return server.overworld().getDataStorage().computeIfAbsent(ID);
-    }
-
-    public long getNextAllowedEpochMillis(String playerUuid) {
-        return cooldowns.getOrDefault(playerUuid, 0L);
-    }
-
-    public void setNextAllowedEpochMillis(String playerUuid, long nextAllowedEpochMillis) {
-        cooldowns.put(playerUuid, nextAllowedEpochMillis);
+    public void setNextAllowedEpochMillis(UUID uuid, long nextAllowedMillis) {
+        nextAllowedMillisByUuid.put(uuid.toString(), nextAllowedMillis);
         setDirty();
+    }
+
+    public long getCooldownMillis() {
+        final long seconds = Math.max(0L, (long) RtpConfig.COOLDOWN_SECONDS.get());
+        return seconds * 1000L;
+    }
+
+    @Override
+    public CompoundTag save(CompoundTag tag, HolderLookup.Provider provider) {
+        CompoundTag mapTag = new CompoundTag();
+        for (var e : nextAllowedMillisByUuid.entrySet()) {
+            mapTag.putLong(e.getKey(), e.getValue());
+        }
+        tag.put("nextAllowedMillisByUuid", mapTag);
+        return tag;
+    }
+
+    public static RtpCooldownData load(CompoundTag tag, HolderLookup.Provider provider) {
+        RtpCooldownData data = new RtpCooldownData();
+        CompoundTag mapTag = tag.getCompound("nextAllowedMillisByUuid");
+        for (String key : mapTag.getAllKeys()) {
+            data.nextAllowedMillisByUuid.put(key, mapTag.getLong(key));
+        }
+        return data;
     }
 }
