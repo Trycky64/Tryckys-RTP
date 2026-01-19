@@ -12,22 +12,11 @@ public final class RtpConfig {
 
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
 
-    /**
-     * How dimensions are filtered.
-     *
-     * - ALLOWLIST: only dimensions in {@link #ALLOWED_DIMENSIONS} can use /rtp
-     * - DENYLIST: dimensions in {@link #BLOCKED_DIMENSIONS} cannot use /rtp
-     */
     public enum DimensionMode {
         ALLOWLIST,
         DENYLIST
     }
 
-    /**
-     * Heightmap used to pick a safe Y for a random (x,z).
-     *
-     * We keep our own enum to avoid config breaking if Mojang renames values.
-     */
     public enum SafeHeightMode {
         MOTION_BLOCKING_NO_LEAVES,
         MOTION_BLOCKING,
@@ -110,6 +99,13 @@ public final class RtpConfig {
     public static final ModConfigSpec.BooleanValue KEEP_YAW_PITCH = BUILDER
             .comment("If true, keeps the player's yaw/pitch on teleport. Otherwise resets to 0.")
             .define("keepYawPitch", true);
+
+    public static final ModConfigSpec.BooleanValue LOG_SUCCESS = BUILDER
+            .comment(
+                    "If true, logs one INFO line per successful /rtp.",
+                    "If false, success logs are DEBUG only."
+            )
+            .define("logSuccess", false);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 }

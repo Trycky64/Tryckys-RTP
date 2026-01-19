@@ -34,10 +34,14 @@ public final class RtpCommand {
         }
 
         final ServerLevel level = player.serverLevel();
+        final String dimId = level.dimension().location().toString();
 
         // Dimension rules
         if (!RtpSafeTeleport.isRtpAllowedInDimension(level)) {
-            player.displayClientMessage(Component.translatable("tryckysrtp.rtp.bad_dimension").withStyle(ChatFormatting.RED), false);
+            player.displayClientMessage(
+                    Component.translatable("tryckysrtp.rtp.bad_dimension", dimId).withStyle(ChatFormatting.RED),
+                    false
+            );
             return 0;
         }
 
@@ -50,14 +54,20 @@ public final class RtpCommand {
 
         if (!bypass && nextAllowed > now) {
             final Duration remaining = Duration.ofMillis(nextAllowed - now);
-            player.displayClientMessage(Component.translatable(
-                    "tryckysrtp.rtp.cooldown",
-                    formatDuration(remaining)
-            ).withStyle(ChatFormatting.RED), false);
+            player.displayClientMessage(
+                    Component.translatable(
+                            "tryckysrtp.rtp.cooldown",
+                            formatDuration(remaining)
+                    ).withStyle(ChatFormatting.RED),
+                    false
+            );
             return 0;
         }
 
-        player.displayClientMessage(Component.translatable("tryckysrtp.rtp.searching").withStyle(ChatFormatting.YELLOW), false);
+        player.displayClientMessage(
+                Component.translatable("tryckysrtp.rtp.searching").withStyle(ChatFormatting.YELLOW),
+                false
+        );
 
         final RtpSafeTeleport.Result result = RtpSafeTeleport.findSafeDestination(level);
         if (!result.success) {
@@ -68,7 +78,7 @@ public final class RtpCommand {
         try {
             RtpSafeTeleport.teleportPlayer(player, level, result.pos);
         } catch (Exception ex) {
-            TryckysRTP.LOGGER.error("Teleport failed for {}", player.getGameProfile().getName(), ex);
+            TryckysRTP.LOGGER.error("RTP teleport failed for {}", player.getGameProfile().getName(), ex);
             player.displayClientMessage(Component.translatable("tryckysrtp.rtp.teleport_failed").withStyle(ChatFormatting.RED), false);
             return 0;
         }
@@ -77,10 +87,32 @@ public final class RtpCommand {
             RtpCooldowns.startCooldown(src.getServer(), id);
         }
 
-        player.displayClientMessage(Component.translatable(
-                "tryckysrtp.rtp.success",
-                result.pos.getX(), result.pos.getY(), result.pos.getZ()
-        ).withStyle(ChatFormatting.GREEN), false);
+        final String newDimId = player.serverLevel().dimension().location().toString();
+
+        player.displayClientMessage(
+                Component.translatable(
+                        "tryckysrtp.rtp.success",
+                        result.pos.getX(), result.pos.getY(), result.pos.getZ(),
+                        newDimId
+                ).withStyle(ChatFormatting.GREEN),
+                false
+        );
+
+        if (RtpConfig.LOG_SUCCESS.get()) {
+            TryckysRTP.LOGGER.info(
+                    "RTP: {} -> ({}, {}, {}) in {}",
+                    player.getGameProfile().getName(),
+                    result.pos.getX(), result.pos.getY(), result.pos.getZ(),
+                    newDimId
+            );
+        } else {
+            TryckysRTP.LOGGER.debug(
+                    "RTP success for {} -> ({}, {}, {}) in {}",
+                    player.getGameProfile().getName(),
+                    result.pos.getX(), result.pos.getY(), result.pos.getZ(),
+                    newDimId
+            );
+        }
 
         return 1;
     }
