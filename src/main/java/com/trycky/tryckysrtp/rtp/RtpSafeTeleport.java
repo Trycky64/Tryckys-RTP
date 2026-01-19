@@ -24,9 +24,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/**
- * P3: Safe random teleport algorithm.
- */
 public final class RtpSafeTeleport {
 
     private RtpSafeTeleport() {}
@@ -69,15 +66,9 @@ public final class RtpSafeTeleport {
         final ResourceKey<Level> dimKey = level.dimension();
         final ResourceLocation dimId = dimKey.location();
 
-        // Simple toggles (applied in addition to list mode)
-        if (!RtpConfig.ALLOW_IN_NETHER.get() && dimId.equals(NETHER_ID)) {
-            return false;
-        }
-        if (!RtpConfig.ALLOW_IN_END.get() && dimId.equals(END_ID)) {
-            return false;
-        }
+        if (!RtpConfig.ALLOW_IN_NETHER.get() && dimId.equals(NETHER_ID)) return false;
+        if (!RtpConfig.ALLOW_IN_END.get() && dimId.equals(END_ID)) return false;
 
-        // Allowlist / denylist
         final RtpConfig.DimensionMode mode = RtpConfig.DIMENSION_MODE.get();
         final List<? extends String> allowed = RtpConfig.ALLOWED_DIMENSIONS.get();
         final List<? extends String> blocked = RtpConfig.BLOCKED_DIMENSIONS.get();
@@ -111,6 +102,7 @@ public final class RtpSafeTeleport {
 
         for (int attempt = 1; attempt <= attemptsMax; attempt++) {
             final BlockPos candidateXZ = pickRandomXZInAnnulus(rng, spawn, minR, maxR, minDistFromSpawn);
+
             final BlockPos safe = resolveSafeYAndValidate(level, candidateXZ);
             if (safe != null) {
                 return Result.ok(safe);
@@ -127,6 +119,7 @@ public final class RtpSafeTeleport {
 
         final double theta = rng.nextDouble() * (Math.PI * 2.0);
 
+        // Uniform-ish on area
         final double r0 = Math.max(0, minR);
         final double R = Math.max(r0, maxR);
         final double u = rng.nextDouble();
@@ -152,37 +145,105 @@ public final class RtpSafeTeleport {
         return new BlockPos(x, 0, z);
     }
 
+    /**
+     * New logic (your idea) for dimensions with skylight:
+     * scan Y upward until the position can see the sky, then validate air/headroom/ground/liquids/hazards.
+     *
+     * Fallback: old heightmap logic for Nether (no skylight) or if scan fails.
+     */
     private static BlockPos resolveSafeYAndValidate(ServerLevel level, BlockPos xz) {
+        final boolean hasSky = level.dimensionType().hasSkyLight();
+
+        if (hasSky) {
+            BlockPos skyScan = resolveBySkyScan(level, xz);
+            if (skyScan != null) return skyScan;
+
+            // fallback to heightmap if something weird happens
+            BlockPos hm = resolveByHeightmap(level, xz);
+            if (hm != null) return hm;
+
+            return null;
+        } else {
+            // Nether / no-sky dimensions: sky scan would always fail
+            return resolveByHeightmap(level, xz);
+        }
+    }
+
+    private static BlockPos resolveBySkyScan(ServerLevel level, BlockPos xz) {
+        // Make sure column chunk is loaded so canSeeSky isn't lying (blocking load)
+        final ChunkPos cp = new ChunkPos(xz);
+        level.getChunk(cp.x, cp.z);
+
+        int yMin = level.getMinBuildHeight() + 1;
+        int yMax = level.getMaxBuildHeight() - 2;
+
+        // Start from heightmap to skip a ton of iterations in normal worlds, then adjust upward if needed.
+        // Still aligns with your "scan up" idea but faster.
+        int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, xz.getX(), xz.getZ());
+        y = Mth.clamp(y, yMin, yMax);
+
+        // Ensure we are not stuck below terrain in weird cases: start a bit lower if needed
+        // (superflat should already work)
+        int start = Math.max(yMin, y - 16);
+
+        for (int yy = start; yy <= yMax; yy++) {
+            BlockPos feet = new BlockPos(xz.getX(), yy, xz.getZ());
+
+            // your core rule: must see sky from feet position
+            if (!level.canSeeSky(feet)) continue;
+
+            if (isValidFeetPosition(level, feet)) {
+                return feet;
+            }
+        }
+
+        return null;
+    }
+
+    private static BlockPos resolveByHeightmap(ServerLevel level, BlockPos xz) {
         final Heightmap.Types heightType = mapHeightMode(RtpConfig.SAFE_HEIGHT_MODE.get());
 
         int y = level.getHeight(heightType, xz.getX(), xz.getZ());
-
-        // feet should never be at max build height - 1, we need headroom
         y = Mth.clamp(y, level.getMinBuildHeight() + 1, level.getMaxBuildHeight() - 2);
 
         final BlockPos feet = new BlockPos(xz.getX(), y, xz.getZ());
+        if (isValidFeetPosition(level, feet)) return feet;
 
+        // If the exact heightmap spot is not valid, try a few blocks upward (common with plants/slabs)
+        for (int i = 1; i <= 8; i++) {
+            BlockPos up = feet.above(i);
+            if (up.getY() >= level.getMaxBuildHeight() - 1) break;
+            if (isValidFeetPosition(level, up)) return up;
+        }
+
+        return null;
+    }
+
+    private static boolean isValidFeetPosition(ServerLevel level, BlockPos feet) {
         // headroom
-        if (!isAirLike(level, feet)) return null;
-        if (!isAirLike(level, feet.above())) return null;
+        if (!isAirLike(level, feet)) return false;
+        if (!isAirLike(level, feet.above())) return false;
 
         final BlockPos groundPos = feet.below();
         final BlockState groundState = level.getBlockState(groundPos);
 
         if (RtpConfig.REQUIRE_SOLID_GROUND.get()) {
-            if (!groundState.isFaceSturdy(level, groundPos, Direction.UP)) return null;
+            if (!groundState.isFaceSturdy(level, groundPos, Direction.UP)) return false;
         }
 
-        if (groundState.is(BlockTags.LEAVES)) return null;
+        // avoid leaves as ground
+        if (groundState.is(BlockTags.LEAVES)) return false;
 
-        if (DANGEROUS_GROUND.contains(groundState.getBlock())) return null;
-        if (groundState.getBlock() instanceof CampfireBlock) return null;
+        // hazards
+        if (DANGEROUS_GROUND.contains(groundState.getBlock())) return false;
+        if (groundState.getBlock() instanceof CampfireBlock) return false;
 
+        // liquids
         if (RtpConfig.AVOID_LIQUIDS.get()) {
-            if (isLiquidAt(level, feet) || isLiquidAt(level, feet.above()) || isLiquidAt(level, groundPos)) return null;
+            if (isLiquidAt(level, feet) || isLiquidAt(level, feet.above()) || isLiquidAt(level, groundPos)) return false;
         }
 
-        return feet;
+        return true;
     }
 
     private static boolean isAirLike(ServerLevel level, BlockPos pos) {
@@ -205,7 +266,6 @@ public final class RtpSafeTeleport {
     }
 
     public static void teleportPlayer(ServerPlayer player, ServerLevel level, BlockPos feet) {
-        // Ensure destination chunk is loaded (blocking)
         final ChunkPos cp = new ChunkPos(feet);
         level.getChunk(cp.x, cp.z);
 
