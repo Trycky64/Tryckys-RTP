@@ -1,34 +1,30 @@
-# NeoForge mod metadata (generated from templates; values expanded from gradle.properties)
-
 modLoader="javafml"
-loaderVersion="${loader_version_range}"
-license="${mod_license}"
+loaderVersion="[4,)"
+license="MIT"
 logoFile="logo.png"
 
 [[mods]]
-modId="${mod_id}"
-version="${mod_version}"
-displayName="${mod_name}"
+modId="tryckysrtp"
+version="1.0.0"
+displayName="Trycky's RTP"
 authors="Trycky"
 description='''
 Adds /rtp (random teleport) for NeoForge servers.
 Includes a per-player cooldown and safe location search.
 '''
-# Optionnel (recommandé pour release)
-# displayURL="https://github.com/TON_USER/TonRepo"
-# issueTrackerURL="https://github.com/TON_USER/TonRepo/issues"
-# credits="Contributors / testers"
+displayURL="https://github.com/Trycky64/Tryckys-RTP"
+issueTrackerURL="https://github.com/Trycky64/Tryckys-RTP/issues"
 
-[[dependencies.${mod_id}]]
+[[dependencies.tryckysrtp]]
 modId="neoforge"
 type="required"
-versionRange="[${neo_version},)"
+versionRange="[21.1.218,)"
 ordering="NONE"
 side="BOTH"
 
-[[dependencies.${mod_id}]]
+[[dependencies.tryckysrtp]]
 modId="minecraft"
 type="required"
-versionRange="${minecraft_version_range}"
+versionRange="[1.21.1,1.22)"
 ordering="NONE"
 side="BOTH"
