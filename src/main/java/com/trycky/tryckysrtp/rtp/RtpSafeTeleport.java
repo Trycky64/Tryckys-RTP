@@ -86,7 +86,6 @@ public final class RtpSafeTeleport {
         final BlockPos center = level.getSharedSpawnPos();
         final RandomSource rng = level.getRandom();
 
-        // Target Y = player's current Y, clamped. This makes Nether choose a sane band instead of roof.
         final int yMin = level.getMinBuildHeight() + 1;
         final int yMax = level.getMaxBuildHeight() - 2;
         final int targetY = Mth.clamp(player.blockPosition().getY(), yMin, yMax);
@@ -131,49 +130,70 @@ public final class RtpSafeTeleport {
     }
 
     /**
-     * Generic column scan that works in any dimension:
-     * Find all "standable" spots (solid ground + 2-high air) in the column,
-     * then pick the one closest to targetY.
-     *
-     * This avoids Nether roof without hardcoding Y ranges.
+     * Generic, dimension-safe:
+     * - We scan a column and collect valid "standable" spots.
+     * - For skylight dims, we can enforce surface-only (canSeeSky).
+     * - For ceiling dims, we reject overly-open spots above (prevents Nether roof).
+     * - We pick the best candidate close to targetY (keeps you in the "play band" of the dimension).
      */
     private static BlockPos resolveBestSafeSpotInColumn(ServerLevel level, BlockPos xz, int targetY) {
-        // Ensure chunk loaded for consistent reads
+        // Ensure chunk loaded
         final ChunkPos cp = new ChunkPos(xz);
         level.getChunk(cp.x, cp.z);
 
         final int yMin = level.getMinBuildHeight() + 1;
         final int yMax = level.getMaxBuildHeight() - 2;
 
-        // Start from a "reasonable" top: use heightmap to skip empty sky in sky dims.
-        // In no-sky dims (Nether), heightmap still returns something, but we still scan full band if needed.
+        // Start from a reasonable top using heightmap
         int startY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, xz.getX(), xz.getZ());
-        startY = Mth.clamp(startY + 16, yMin, yMax); // +16 gives room to catch caves above top surface too
+        startY = Mth.clamp(startY + 16, yMin, yMax);
 
         BlockPos best = null;
         int bestScore = Integer.MAX_VALUE;
 
-        // Scan downward (top -> bottom). But we do NOT return first match.
-        // We pick the match whose Y is closest to targetY.
         for (int yy = startY; yy >= yMin; yy--) {
             BlockPos feet = new BlockPos(xz.getX(), yy, xz.getZ());
             if (!isValidFeetPosition(level, feet)) continue;
+
+            // Overworld fix: surface-only if skylight and enabled
+            if (RtpConfig.SURFACE_ONLY_IN_SKYLIGHT_DIMS.get() && level.dimensionType().hasSkyLight()) {
+                if (!level.canSeeSky(feet)) continue;
+            }
+
+            // Nether roof fix: in ceiling dimensions, reject positions with too much open space above
+            if (level.dimensionType().hasCeiling()) {
+                int maxClear = RtpConfig.MAX_CEILING_CLEARANCE.get();
+                if (maxClear > 0) {
+                    int clearance = ceilingClearance(level, feet, maxClear + 1);
+                    if (clearance > maxClear) continue;
+                }
+            }
 
             int score = Math.abs(yy - targetY);
             if (score < bestScore) {
                 bestScore = score;
                 best = feet;
-
-                // Early exit: if we hit exact targetY, that's optimal.
                 if (bestScore == 0) break;
             }
         }
 
-        // If nothing found from startY->yMin, try scanning the remaining upper band (rare edge case)
+        // Rare edge: scan above startY if nothing found
         if (best == null && startY < yMax) {
             for (int yy = startY + 1; yy <= yMax; yy++) {
                 BlockPos feet = new BlockPos(xz.getX(), yy, xz.getZ());
                 if (!isValidFeetPosition(level, feet)) continue;
+
+                if (RtpConfig.SURFACE_ONLY_IN_SKYLIGHT_DIMS.get() && level.dimensionType().hasSkyLight()) {
+                    if (!level.canSeeSky(feet)) continue;
+                }
+
+                if (level.dimensionType().hasCeiling()) {
+                    int maxClear = RtpConfig.MAX_CEILING_CLEARANCE.get();
+                    if (maxClear > 0) {
+                        int clearance = ceilingClearance(level, feet, maxClear + 1);
+                        if (clearance > maxClear) continue;
+                    }
+                }
 
                 int score = Math.abs(yy - targetY);
                 if (score < bestScore) {
@@ -187,6 +207,22 @@ public final class RtpSafeTeleport {
         return best;
     }
 
+    /**
+     * Returns distance from feet to the next non-empty collision block above, capped by maxScan.
+     * If nothing found within maxScan, returns maxScan (meaning "very open").
+     */
+    private static int ceilingClearance(ServerLevel level, BlockPos feet, int maxScan) {
+        for (int i = 1; i <= maxScan; i++) {
+            BlockPos p = feet.above(i);
+            if (p.getY() >= level.getMaxBuildHeight()) return maxScan;
+            BlockState s = level.getBlockState(p);
+            if (!s.getCollisionShape(level, p).isEmpty()) {
+                return i;
+            }
+        }
+        return maxScan;
+    }
+
     private static boolean isValidFeetPosition(ServerLevel level, BlockPos feet) {
         if (!isAirLike(level, feet)) return false;
         if (!isAirLike(level, feet.above())) return false;
@@ -198,14 +234,10 @@ public final class RtpSafeTeleport {
             if (!groundState.isFaceSturdy(level, groundPos, Direction.UP)) return false;
         }
 
-        // avoid leaves as ground (generic)
         if (groundState.is(BlockTags.LEAVES)) return false;
-
-        // hazards
         if (DANGEROUS_GROUND.contains(groundState.getBlock())) return false;
         if (groundState.getBlock() instanceof CampfireBlock) return false;
 
-        // liquids
         if (RtpConfig.AVOID_LIQUIDS.get()) {
             if (isLiquidAt(level, feet) || isLiquidAt(level, feet.above()) || isLiquidAt(level, groundPos)) return false;
         }

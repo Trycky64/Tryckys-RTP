@@ -107,5 +107,21 @@ public final class RtpConfig {
             )
             .define("logSuccess", false);
 
+    public static final ModConfigSpec.BooleanValue SURFACE_ONLY_IN_SKYLIGHT_DIMS = BUILDER
+            .comment(
+                    "If true, in dimensions with skylight the destination must see the sky (surface-only).",
+                    "This prevents /rtp from landing in caves in the Overworld."
+            )
+            .define("surfaceOnlyInSkylightDims", true);
+
+    public static final ModConfigSpec.IntValue MAX_CEILING_CLEARANCE = BUILDER
+            .comment(
+                    "In ceiling dimensions (e.g. Nether), reject destinations where the space above is too open.",
+                    "This helps prevent teleporting onto the Nether roof without hardcoding Y values.",
+                    "Measured as: distance from player feet to the next non-air collision block above.",
+                    "0 disables this check."
+            )
+            .defineInRange("maxCeilingClearance", 32, 0, 512);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 }
