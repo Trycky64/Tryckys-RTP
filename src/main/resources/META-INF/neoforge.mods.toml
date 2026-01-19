@@ -14,6 +14,10 @@ description='''
 Adds /rtp (random teleport) for NeoForge servers.
 Includes a per-player cooldown and safe location search.
 '''
+# Optionnel (recommandé pour release)
+# displayURL="https://github.com/TON_USER/TonRepo"
+# issueTrackerURL="https://github.com/TON_USER/TonRepo/issues"
+# credits="Contributors / testers"
 
 [[dependencies.${mod_id}]]
 modId="neoforge"
@@ -28,4 +32,3 @@ type="required"
 versionRange="${minecraft_version_range}"
 ordering="NONE"
 side="BOTH"
-
