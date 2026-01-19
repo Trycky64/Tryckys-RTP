@@ -73,7 +73,7 @@ public final class RtpSafeTeleport {
         return !blocked.contains(id);
     }
 
-    public static Result findSafeDestination(ServerLevel level) {
+    public static Result findSafeDestination(ServerLevel level, ServerPlayer player) {
         if (!isRtpAllowedInDimension(level)) return Result.fail("tryckysrtp.rtp.bad_dimension");
 
         final int attemptsMax = RtpConfig.ATTEMPTS_MAX.get();
@@ -83,12 +83,17 @@ public final class RtpSafeTeleport {
         int maxR = Math.max(0, RtpConfig.RADIUS_MAX.get());
         if (maxR < minR) { int t = maxR; maxR = minR; minR = t; }
 
-        final BlockPos spawn = level.getSharedSpawnPos();
+        final BlockPos center = level.getSharedSpawnPos();
         final RandomSource rng = level.getRandom();
 
+        // Target Y = player's current Y, clamped. This makes Nether choose a sane band instead of roof.
+        final int yMin = level.getMinBuildHeight() + 1;
+        final int yMax = level.getMaxBuildHeight() - 2;
+        final int targetY = Mth.clamp(player.blockPosition().getY(), yMin, yMax);
+
         for (int attempt = 1; attempt <= attemptsMax; attempt++) {
-            final BlockPos candidateXZ = pickRandomXZInAnnulus(rng, spawn, minR, maxR, minDistFromSpawn);
-            final BlockPos safe = resolveSafeYAndValidate(level, candidateXZ);
+            final BlockPos candidateXZ = pickRandomXZInAnnulus(rng, center, minR, maxR, minDistFromSpawn);
+            final BlockPos safe = resolveBestSafeSpotInColumn(level, candidateXZ, targetY);
             if (safe != null) return Result.ok(safe);
         }
 
@@ -125,87 +130,61 @@ public final class RtpSafeTeleport {
         return new BlockPos(x, 0, z);
     }
 
-    private static BlockPos resolveSafeYAndValidate(ServerLevel level, BlockPos xz) {
-        // ensure chunk is loaded for accurate reads
+    /**
+     * Generic column scan that works in any dimension:
+     * Find all "standable" spots (solid ground + 2-high air) in the column,
+     * then pick the one closest to targetY.
+     *
+     * This avoids Nether roof without hardcoding Y ranges.
+     */
+    private static BlockPos resolveBestSafeSpotInColumn(ServerLevel level, BlockPos xz, int targetY) {
+        // Ensure chunk loaded for consistent reads
         final ChunkPos cp = new ChunkPos(xz);
         level.getChunk(cp.x, cp.z);
 
-        final boolean hasSky = level.dimensionType().hasSkyLight();
-
-        if (hasSky) {
-            BlockPos sky = resolveBySkyScan(level, xz);
-            if (sky != null) return sky;
-
-            BlockPos hm = resolveByHeightmap(level, xz);
-            if (hm != null) return hm;
-
-            return null;
-        } else {
-            // Nether / no-sky dimensions: do a vertical scan for a valid air pocket
-            BlockPos pocket = resolveByVerticalAirPocketScan(level, xz);
-            if (pocket != null) return pocket;
-
-            // fallback, just in case
-            return resolveByHeightmap(level, xz);
-        }
-    }
-
-    /** Overworld/End: your "canSeeSky then validate" logic. */
-    private static BlockPos resolveBySkyScan(ServerLevel level, BlockPos xz) {
-        int yMin = level.getMinBuildHeight() + 1;
-        int yMax = level.getMaxBuildHeight() - 2;
-
-        int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, xz.getX(), xz.getZ());
-        y = Mth.clamp(y, yMin, yMax);
-
-        int start = Math.max(yMin, y - 16);
-
-        for (int yy = start; yy <= yMax; yy++) {
-            BlockPos feet = new BlockPos(xz.getX(), yy, xz.getZ());
-            if (!level.canSeeSky(feet)) continue;
-            if (isValidFeetPosition(level, feet)) return feet;
-        }
-        return null;
-    }
-
-    /**
-     * Nether-friendly: scan from top to bottom for a 2-high air pocket with solid ground.
-     * We also avoid the bedrock roof zone by default (common annoyance).
-     */
-    private static BlockPos resolveByVerticalAirPocketScan(ServerLevel level, BlockPos xz) {
         final int yMin = level.getMinBuildHeight() + 1;
         final int yMax = level.getMaxBuildHeight() - 2;
 
-        // Avoid the roof: in Nether, build height max is often 128/256 depending on version;
-        // we just avoid the very top 10 blocks.
-        final int startY = Math.max(yMin, yMax - 10);
+        // Start from a "reasonable" top: use heightmap to skip empty sky in sky dims.
+        // In no-sky dims (Nether), heightmap still returns something, but we still scan full band if needed.
+        int startY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, xz.getX(), xz.getZ());
+        startY = Mth.clamp(startY + 16, yMin, yMax); // +16 gives room to catch caves above top surface too
 
-        // Scan downward for the first valid pocket
+        BlockPos best = null;
+        int bestScore = Integer.MAX_VALUE;
+
+        // Scan downward (top -> bottom). But we do NOT return first match.
+        // We pick the match whose Y is closest to targetY.
         for (int yy = startY; yy >= yMin; yy--) {
             BlockPos feet = new BlockPos(xz.getX(), yy, xz.getZ());
-            if (isValidFeetPosition(level, feet)) return feet;
+            if (!isValidFeetPosition(level, feet)) continue;
+
+            int score = Math.abs(yy - targetY);
+            if (score < bestScore) {
+                bestScore = score;
+                best = feet;
+
+                // Early exit: if we hit exact targetY, that's optimal.
+                if (bestScore == 0) break;
+            }
         }
 
-        return null;
-    }
+        // If nothing found from startY->yMin, try scanning the remaining upper band (rare edge case)
+        if (best == null && startY < yMax) {
+            for (int yy = startY + 1; yy <= yMax; yy++) {
+                BlockPos feet = new BlockPos(xz.getX(), yy, xz.getZ());
+                if (!isValidFeetPosition(level, feet)) continue;
 
-    /** Generic: heightmap + small upward adjustment. */
-    private static BlockPos resolveByHeightmap(ServerLevel level, BlockPos xz) {
-        final Heightmap.Types heightType = mapHeightMode(RtpConfig.SAFE_HEIGHT_MODE.get());
-
-        int y = level.getHeight(heightType, xz.getX(), xz.getZ());
-        y = Mth.clamp(y, level.getMinBuildHeight() + 1, level.getMaxBuildHeight() - 2);
-
-        final BlockPos feet = new BlockPos(xz.getX(), y, xz.getZ());
-        if (isValidFeetPosition(level, feet)) return feet;
-
-        for (int i = 1; i <= 8; i++) {
-            BlockPos up = feet.above(i);
-            if (up.getY() >= level.getMaxBuildHeight() - 1) break;
-            if (isValidFeetPosition(level, up)) return up;
+                int score = Math.abs(yy - targetY);
+                if (score < bestScore) {
+                    bestScore = score;
+                    best = feet;
+                    if (bestScore == 0) break;
+                }
+            }
         }
 
-        return null;
+        return best;
     }
 
     private static boolean isValidFeetPosition(ServerLevel level, BlockPos feet) {
@@ -219,10 +198,14 @@ public final class RtpSafeTeleport {
             if (!groundState.isFaceSturdy(level, groundPos, Direction.UP)) return false;
         }
 
+        // avoid leaves as ground (generic)
         if (groundState.is(BlockTags.LEAVES)) return false;
+
+        // hazards
         if (DANGEROUS_GROUND.contains(groundState.getBlock())) return false;
         if (groundState.getBlock() instanceof CampfireBlock) return false;
 
+        // liquids
         if (RtpConfig.AVOID_LIQUIDS.get()) {
             if (isLiquidAt(level, feet) || isLiquidAt(level, feet.above()) || isLiquidAt(level, groundPos)) return false;
         }
@@ -238,15 +221,6 @@ public final class RtpSafeTeleport {
     private static boolean isLiquidAt(ServerLevel level, BlockPos pos) {
         final FluidState fluid = level.getFluidState(pos);
         return !fluid.isEmpty();
-    }
-
-    private static Heightmap.Types mapHeightMode(RtpConfig.SafeHeightMode mode) {
-        return switch (mode) {
-            case MOTION_BLOCKING_NO_LEAVES -> Heightmap.Types.MOTION_BLOCKING_NO_LEAVES;
-            case MOTION_BLOCKING -> Heightmap.Types.MOTION_BLOCKING;
-            case WORLD_SURFACE -> Heightmap.Types.WORLD_SURFACE;
-            case OCEAN_FLOOR -> Heightmap.Types.OCEAN_FLOOR;
-        };
     }
 
     public static void teleportPlayer(ServerPlayer player, ServerLevel level, BlockPos feet) {

@@ -69,7 +69,7 @@ public final class RtpCommand {
                 false
         );
 
-        final RtpSafeTeleport.Result result = RtpSafeTeleport.findSafeDestination(level);
+        final RtpSafeTeleport.Result result = RtpSafeTeleport.findSafeDestination(level, player);
         if (!result.success) {
             player.displayClientMessage(Component.translatable(result.errorKey).withStyle(ChatFormatting.RED), false);
             return 0;
