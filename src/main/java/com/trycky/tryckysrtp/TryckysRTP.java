@@ -25,19 +25,26 @@ public final class TryckysRTP {
 
         NeoForge.EVENT_BUS.register(this);
 
-        RtpLogger.info(LOGGER, "{} loaded", MODID);
+        // IMPORTANT: don't touch config values here
+        LOGGER.info("{} constructed (config not loaded yet)", MODID);
     }
 
     private void onConfigLoading(final ModConfigEvent.Loading event) {
         if (event.getConfig().getType() != ModConfig.Type.COMMON) return;
+
+        RtpLogger.applyConfig();
         RtpConfigValidator.validate();
+
         RtpLogger.info(LOGGER, "{} config loaded", MODID);
     }
 
     private void onConfigReloading(final ModConfigEvent.Reloading event) {
         if (event.getConfig().getType() != ModConfig.Type.COMMON) return;
+
+        RtpLogger.applyConfig();
         RtpRuntime.clearCaches();
         RtpConfigValidator.validate();
+
         RtpLogger.info(LOGGER, "{} config reloaded", MODID);
     }
 
@@ -46,9 +53,8 @@ public final class TryckysRTP {
         RtpCommand.register(event.getDispatcher());
     }
 
-    // W03/W11 — actionbar cooldown service (cheap, internally throttled)
     @SubscribeEvent
-    public void onServerTick(ServerTickEvent event) {
+    public void onServerTick(ServerTickEvent.Post event) {
         if (event.getServer() == null) return;
         RtpActionbarCooldownService.onServerTick(event.getServer());
     }

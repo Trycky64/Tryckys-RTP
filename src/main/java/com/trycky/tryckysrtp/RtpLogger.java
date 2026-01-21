@@ -4,7 +4,9 @@ import org.slf4j.Logger;
 
 /**
  * W08 — Configurable logs: OFF / INFO / DEBUG.
- * Centralize all mod logging to keep output clean and admin-friendly.
+ *
+ * IMPORTANT: NeoForge config values cannot be read before config load.
+ * So we keep a runtime level that becomes effective once configs are loaded/reloaded.
  */
 public final class RtpLogger {
     private RtpLogger() {}
@@ -15,20 +17,32 @@ public final class RtpLogger {
         DEBUG
     }
 
+    // Default before config load
+    private static volatile Level runtimeLevel = Level.INFO;
+
+    public static void applyConfig() {
+        // Called after config is loaded/reloaded (safe time)
+        try {
+            runtimeLevel = RtpConfig.LOG_LEVEL.get();
+        } catch (Throwable ignored) {
+            // Keep previous/runtime default
+        }
+    }
+
     public static void info(Logger logger, String msg, Object... args) {
-        if (RtpConfig.LOG_LEVEL.get() == Level.INFO || RtpConfig.LOG_LEVEL.get() == Level.DEBUG) {
+        final Level lvl = runtimeLevel;
+        if (lvl == Level.INFO || lvl == Level.DEBUG) {
             logger.info(msg, args);
         }
     }
 
     public static void debug(Logger logger, String msg, Object... args) {
-        if (RtpConfig.LOG_LEVEL.get() == Level.DEBUG) {
+        if (runtimeLevel == Level.DEBUG) {
             logger.debug(msg, args);
         }
     }
 
     public static void warn(Logger logger, String msg, Object... args) {
-        // Warnings are always visible (admin needs them)
         logger.warn(msg, args);
     }
 
