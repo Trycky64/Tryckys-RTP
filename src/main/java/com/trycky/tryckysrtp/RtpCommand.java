@@ -19,7 +19,7 @@ public final class RtpCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(
                 Commands.literal("rtp")
-                        .requires(src -> true) // accessible à tous
+                        .requires(src -> true)
                         .executes(ctx -> execute(ctx.getSource()))
         );
     }
@@ -37,7 +37,6 @@ public final class RtpCommand {
         final String dimId = level.dimension().location().toString();
         final String playerName = player.getGameProfile().getName();
 
-        // Dimension rules
         if (!RtpSafeTeleport.isRtpAllowedInDimension(level)) {
             player.displayClientMessage(
                     Component.translatable("tryckysrtp.rtp.bad_dimension", dimId).withStyle(ChatFormatting.RED),
@@ -72,7 +71,6 @@ public final class RtpCommand {
 
         final RtpSafeTeleport.Result result = RtpSafeTeleport.findSafeDestination(level, player);
         if (!result.success) {
-            // W01: message fail configurable (garde la raison détaillée dans les logs)
             TryckysRTP.LOGGER.debug("RTP failed for {} in {}: {}", playerName, dimId, result.errorKey);
             player.displayClientMessage(
                     Component.literal(RtpMessages.fail(playerName, dimId)).withStyle(ChatFormatting.RED),
@@ -95,6 +93,9 @@ public final class RtpCommand {
         if (!bypass) {
             RtpCooldowns.startCooldown(src.getServer(), id);
         }
+
+        // W02: feedback (sound + particles) on arrival, player-only
+        RtpFeedback.onArrival(player, result.pos);
 
         final String newDimId = player.serverLevel().dimension().location().toString();
 

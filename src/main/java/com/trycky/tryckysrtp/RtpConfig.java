@@ -145,5 +145,67 @@ public final class RtpConfig {
             )
             .define("messages.fail", "RTP impossible.");
 
+    // ---------------------------------------------------------------------
+    // Feedback (W02) - sound & particles on arrival
+    // ---------------------------------------------------------------------
+
+    public static final ModConfigSpec.BooleanValue FEEDBACK_SOUND_ENABLED = BUILDER
+            .comment("If true, plays a sound to the teleported player on successful RTP.")
+            .define("feedback.sound.enabled", true);
+
+    public static final ModConfigSpec.ConfigValue<String> FEEDBACK_SOUND_EVENT = BUILDER
+            .comment(
+                    "Sound event resource location for RTP arrival.",
+                    "Example: minecraft:entity.enderman.teleport"
+            )
+            .define("feedback.sound.event", "minecraft:entity.enderman.teleport");
+
+    public static final ModConfigSpec.DoubleValue FEEDBACK_SOUND_VOLUME = BUILDER
+            .comment("Arrival sound volume (0.0 to 4.0).")
+            .defineInRange("feedback.sound.volume", 1.0D, 0.0D, 4.0D);
+
+    public static final ModConfigSpec.DoubleValue FEEDBACK_SOUND_PITCH = BUILDER
+            .comment("Arrival sound pitch (0.0 to 2.0).")
+            .defineInRange("feedback.sound.pitch", 1.0D, 0.0D, 2.0D);
+
+    public static final ModConfigSpec.BooleanValue FEEDBACK_PARTICLES_ENABLED = BUILDER
+            .comment("If true, spawns particles around the teleported player on successful RTP.")
+            .define("feedback.particles.enabled", true);
+
+    public static final ModConfigSpec.ConfigValue<String> FEEDBACK_PARTICLES_TYPE = BUILDER
+            .comment(
+                    "Particle type resource location for RTP arrival.",
+                    "Example: minecraft:portal",
+                    "Note: this implementation supports simple particles (SimpleParticleType)."
+            )
+            .define("feedback.particles.type", "minecraft:portal");
+
+    public static final ModConfigSpec.IntValue FEEDBACK_PARTICLES_COUNT = BUILDER
+            .comment("Number of particles to spawn (server-side).")
+            .defineInRange("feedback.particles.count", 40, 0, 10_000);
+
+    public static final ModConfigSpec.DoubleValue FEEDBACK_PARTICLES_SPREAD_X = BUILDER
+            .comment("Particles spread on X axis.")
+            .defineInRange("feedback.particles.spreadX", 0.6D, 0.0D, 32.0D);
+
+    public static final ModConfigSpec.DoubleValue FEEDBACK_PARTICLES_SPREAD_Y = BUILDER
+            .comment("Particles spread on Y axis.")
+            .defineInRange("feedback.particles.spreadY", 0.8D, 0.0D, 32.0D);
+
+    public static final ModConfigSpec.DoubleValue FEEDBACK_PARTICLES_SPREAD_Z = BUILDER
+            .comment("Particles spread on Z axis.")
+            .defineInRange("feedback.particles.spreadZ", 0.6D, 0.0D, 32.0D);
+
+    public static final ModConfigSpec.DoubleValue FEEDBACK_PARTICLES_SPEED = BUILDER
+            .comment("Particles speed parameter (meaning depends on particle).")
+            .defineInRange("feedback.particles.speed", 0.02D, 0.0D, 4.0D);
+
+    public static final ModConfigSpec.BooleanValue FEEDBACK_PARTICLES_FORCE = BUILDER
+            .comment(
+                    "If true, forces particle rendering at long range for the target player.",
+                    "Usually keep false for server safety."
+            )
+            .define("feedback.particles.force", false);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 }
