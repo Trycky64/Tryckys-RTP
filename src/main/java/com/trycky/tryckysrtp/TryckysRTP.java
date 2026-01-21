@@ -9,7 +9,7 @@ import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.event.TickEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.slf4j.Logger;
 
 @Mod(TryckysRTP.MODID)
@@ -46,10 +46,9 @@ public final class TryckysRTP {
         RtpCommand.register(event.getDispatcher());
     }
 
-    // W11 actionbar cooldown service (cheap)
+    // W03/W11 — actionbar cooldown service (cheap, internally throttled)
     @SubscribeEvent
-    public void onServerTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
+    public void onServerTick(ServerTickEvent event) {
         if (event.getServer() == null) return;
         RtpActionbarCooldownService.onServerTick(event.getServer());
     }
