@@ -9,7 +9,7 @@ import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.event.server.ServerStartingEvent;
+import net.neoforged.neoforge.event.TickEvent;
 import org.slf4j.Logger;
 
 @Mod(TryckysRTP.MODID)
@@ -25,36 +25,32 @@ public final class TryckysRTP {
 
         NeoForge.EVENT_BUS.register(this);
 
-        LOGGER.info("{} loaded", MODID);
+        RtpLogger.info(LOGGER, "{} loaded", MODID);
     }
 
     private void onConfigLoading(final ModConfigEvent.Loading event) {
         if (event.getConfig().getType() != ModConfig.Type.COMMON) return;
-        validateConfig();
-        LOGGER.info("{} config loaded", MODID);
+        RtpConfigValidator.validate();
+        RtpLogger.info(LOGGER, "{} config loaded", MODID);
     }
 
     private void onConfigReloading(final ModConfigEvent.Reloading event) {
         if (event.getConfig().getType() != ModConfig.Type.COMMON) return;
-        validateConfig();
-        LOGGER.info("{} config reloaded", MODID);
-    }
-
-    private static void validateConfig() {
-        final int min = RtpConfig.RADIUS_MIN.get();
-        final int max = RtpConfig.RADIUS_MAX.get();
-        if (max < min) {
-            LOGGER.warn("Invalid config: radiusMax ({}) < radiusMin ({}). Values will be swapped at runtime.", max, min);
-        }
-    }
-
-    @SubscribeEvent
-    public void onServerStarting(ServerStartingEvent event) {
-        LOGGER.info("{} server starting", MODID);
+        RtpRuntime.clearCaches();
+        RtpConfigValidator.validate();
+        RtpLogger.info(LOGGER, "{} config reloaded", MODID);
     }
 
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
         RtpCommand.register(event.getDispatcher());
+    }
+
+    // W11 actionbar cooldown service (cheap)
+    @SubscribeEvent
+    public void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) return;
+        if (event.getServer() == null) return;
+        RtpActionbarCooldownService.onServerTick(event.getServer());
     }
 }

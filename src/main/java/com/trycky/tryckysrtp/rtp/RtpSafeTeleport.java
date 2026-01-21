@@ -1,6 +1,7 @@
 package com.trycky.tryckysrtp.rtp;
 
 import com.trycky.tryckysrtp.RtpConfig;
+import com.trycky.tryckysrtp.RtpLogger;
 import com.trycky.tryckysrtp.TryckysRTP;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -24,23 +25,26 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * Safe RTP destination search.
+ * W06: bypassUnsafe => relax some constraints, still guarantees "standing space" (2 air blocks).
+ */
 public final class RtpSafeTeleport {
-
     private RtpSafeTeleport() {}
 
     public static final class Result {
         public final boolean success;
         public final BlockPos pos;
-        public final String errorKey;
+        public final String errorMessage;
 
-        private Result(boolean success, BlockPos pos, String errorKey) {
+        private Result(boolean success, BlockPos pos, String errorMessage) {
             this.success = success;
             this.pos = pos;
-            this.errorKey = errorKey;
+            this.errorMessage = errorMessage;
         }
 
         public static Result ok(BlockPos pos) { return new Result(true, pos, null); }
-        public static Result fail(String errorKey) { return new Result(false, null, errorKey); }
+        public static Result fail(String msg) { return new Result(false, null, msg); }
     }
 
     private static final Set<Block> DANGEROUS_GROUND = new HashSet<>(Set.of(
@@ -73,8 +77,8 @@ public final class RtpSafeTeleport {
         return !blocked.contains(id);
     }
 
-    public static Result findSafeDestination(ServerLevel level, ServerPlayer player) {
-        if (!isRtpAllowedInDimension(level)) return Result.fail("tryckysrtp.rtp.bad_dimension");
+    public static Result findSafeDestination(ServerLevel level, ServerPlayer player, boolean bypassUnsafe) {
+        if (!isRtpAllowedInDimension(level)) return Result.fail("You cannot use /rtp in this dimension.");
 
         final int attemptsMax = RtpConfig.ATTEMPTS_MAX.get();
         final int minDistFromSpawn = RtpConfig.MIN_DISTANCE_FROM_SPAWN.get();
@@ -92,11 +96,11 @@ public final class RtpSafeTeleport {
 
         for (int attempt = 1; attempt <= attemptsMax; attempt++) {
             final BlockPos candidateXZ = pickRandomXZInAnnulus(rng, center, minR, maxR, minDistFromSpawn);
-            final BlockPos safe = resolveBestSafeSpotInColumn(level, candidateXZ, targetY);
+            final BlockPos safe = resolveBestSafeSpotInColumn(level, candidateXZ, targetY, bypassUnsafe);
             if (safe != null) return Result.ok(safe);
         }
 
-        return Result.fail("tryckysrtp.rtp.no_safe_spot");
+        return Result.fail("No safe spot found. Try again later or increase attempts/radius.");
     }
 
     private static BlockPos pickRandomXZInAnnulus(RandomSource rng, BlockPos center, int minR, int maxR, int minDistanceFromCenter) {
@@ -129,22 +133,13 @@ public final class RtpSafeTeleport {
         return new BlockPos(x, 0, z);
     }
 
-    /**
-     * Generic, dimension-safe:
-     * - We scan a column and collect valid "standable" spots.
-     * - For skylight dims, we can enforce surface-only (canSeeSky).
-     * - For ceiling dims, we reject overly-open spots above (prevents Nether roof).
-     * - We pick the best candidate close to targetY (keeps you in the "play band" of the dimension).
-     */
-    private static BlockPos resolveBestSafeSpotInColumn(ServerLevel level, BlockPos xz, int targetY) {
-        // Ensure chunk loaded
+    private static BlockPos resolveBestSafeSpotInColumn(ServerLevel level, BlockPos xz, int targetY, boolean bypassUnsafe) {
         final ChunkPos cp = new ChunkPos(xz);
         level.getChunk(cp.x, cp.z);
 
         final int yMin = level.getMinBuildHeight() + 1;
         final int yMax = level.getMaxBuildHeight() - 2;
 
-        // Start from a reasonable top using heightmap
         int startY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, xz.getX(), xz.getZ());
         startY = Mth.clamp(startY + 16, yMin, yMax);
 
@@ -152,41 +147,13 @@ public final class RtpSafeTeleport {
         int bestScore = Integer.MAX_VALUE;
 
         for (int yy = startY; yy >= yMin; yy--) {
-            BlockPos feet = new BlockPos(xz.getX(), yy, xz.getZ());
-            if (!isValidFeetPosition(level, feet)) continue;
+            final BlockPos feet = new BlockPos(xz.getX(), yy, xz.getZ());
+            if (!isValidFeetPosition(level, feet, bypassUnsafe)) continue;
 
-            // Overworld fix: surface-only if skylight and enabled
-            if (RtpConfig.SURFACE_ONLY_IN_SKYLIGHT_DIMS.get() && level.dimensionType().hasSkyLight()) {
-                if (!level.canSeeSky(feet)) continue;
-            }
-
-            // Nether roof fix: in ceiling dimensions, reject positions with too much open space above
-            if (level.dimensionType().hasCeiling()) {
-                int maxClear = RtpConfig.MAX_CEILING_CLEARANCE.get();
-                if (maxClear > 0) {
-                    int clearance = ceilingClearance(level, feet, maxClear + 1);
-                    if (clearance > maxClear) continue;
-                }
-            }
-
-            int score = Math.abs(yy - targetY);
-            if (score < bestScore) {
-                bestScore = score;
-                best = feet;
-                if (bestScore == 0) break;
-            }
-        }
-
-        // Rare edge: scan above startY if nothing found
-        if (best == null && startY < yMax) {
-            for (int yy = startY + 1; yy <= yMax; yy++) {
-                BlockPos feet = new BlockPos(xz.getX(), yy, xz.getZ());
-                if (!isValidFeetPosition(level, feet)) continue;
-
+            if (!bypassUnsafe) {
                 if (RtpConfig.SURFACE_ONLY_IN_SKYLIGHT_DIMS.get() && level.dimensionType().hasSkyLight()) {
                     if (!level.canSeeSky(feet)) continue;
                 }
-
                 if (level.dimensionType().hasCeiling()) {
                     int maxClear = RtpConfig.MAX_CEILING_CLEARANCE.get();
                     if (maxClear > 0) {
@@ -194,52 +161,49 @@ public final class RtpSafeTeleport {
                         if (clearance > maxClear) continue;
                     }
                 }
+            }
 
-                int score = Math.abs(yy - targetY);
-                if (score < bestScore) {
-                    bestScore = score;
-                    best = feet;
-                    if (bestScore == 0) break;
-                }
+            final int score = Math.abs(yy - targetY);
+            if (score < bestScore) {
+                bestScore = score;
+                best = feet;
+                if (bestScore == 0) break;
             }
         }
 
         return best;
     }
 
-    /**
-     * Returns distance from feet to the next non-empty collision block above, capped by maxScan.
-     * If nothing found within maxScan, returns maxScan (meaning "very open").
-     */
     private static int ceilingClearance(ServerLevel level, BlockPos feet, int maxScan) {
         for (int i = 1; i <= maxScan; i++) {
             BlockPos p = feet.above(i);
             if (p.getY() >= level.getMaxBuildHeight()) return maxScan;
             BlockState s = level.getBlockState(p);
-            if (!s.getCollisionShape(level, p).isEmpty()) {
-                return i;
-            }
+            if (!s.getCollisionShape(level, p).isEmpty()) return i;
         }
         return maxScan;
     }
 
-    private static boolean isValidFeetPosition(ServerLevel level, BlockPos feet) {
+    private static boolean isValidFeetPosition(ServerLevel level, BlockPos feet, boolean bypassUnsafe) {
         if (!isAirLike(level, feet)) return false;
         if (!isAirLike(level, feet.above())) return false;
 
         final BlockPos groundPos = feet.below();
         final BlockState groundState = level.getBlockState(groundPos);
 
-        if (RtpConfig.REQUIRE_SOLID_GROUND.get()) {
+        // Even in bypassUnsafe we still want something sensible; we only relax optional checks.
+        if (!bypassUnsafe && RtpConfig.REQUIRE_SOLID_GROUND.get()) {
             if (!groundState.isFaceSturdy(level, groundPos, Direction.UP)) return false;
         }
 
-        if (groundState.is(BlockTags.LEAVES)) return false;
-        if (DANGEROUS_GROUND.contains(groundState.getBlock())) return false;
-        if (groundState.getBlock() instanceof CampfireBlock) return false;
+        if (!bypassUnsafe) {
+            if (groundState.is(BlockTags.LEAVES)) return false;
+            if (DANGEROUS_GROUND.contains(groundState.getBlock())) return false;
+            if (groundState.getBlock() instanceof CampfireBlock) return false;
 
-        if (RtpConfig.AVOID_LIQUIDS.get()) {
-            if (isLiquidAt(level, feet) || isLiquidAt(level, feet.above()) || isLiquidAt(level, groundPos)) return false;
+            if (RtpConfig.AVOID_LIQUIDS.get()) {
+                if (isLiquidAt(level, feet) || isLiquidAt(level, feet.above()) || isLiquidAt(level, groundPos)) return false;
+            }
         }
 
         return true;
@@ -267,7 +231,7 @@ public final class RtpSafeTeleport {
         final double ty = feet.getY();
         final double tz = feet.getZ() + 0.5;
 
-        TryckysRTP.LOGGER.debug("Teleporting {} to {} in {}", player.getGameProfile().getName(), feet, level.dimension().location());
+        RtpLogger.debug(TryckysRTP.LOGGER, "Teleporting {} to {} in {}", player.getGameProfile().getName(), feet, level.dimension().location());
         player.teleportTo(level, tx, ty, tz, Set.of(), yaw, pitch);
     }
 }

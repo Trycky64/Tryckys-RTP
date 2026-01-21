@@ -6,6 +6,10 @@ import net.minecraft.core.particles.ParticleType;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -15,8 +19,8 @@ import net.minecraft.sounds.SoundSource;
 import java.util.Objects;
 
 /**
- * W02: sound & particle feedback on RTP arrival.
- * Goal: reliable visuals on dedicated servers.
+ * W02 — sound & particles
+ * W03 — title on arrival
  */
 public final class RtpFeedback {
     private RtpFeedback() {}
@@ -34,6 +38,17 @@ public final class RtpFeedback {
 
         playArrivalSound(player);
         spawnArrivalParticles(player);
+        sendArrivalTitle(player, feet);
+    }
+
+    public static void clearCaches() {
+        lastSoundId = null;
+        cachedSound = null;
+        warnedSound = false;
+
+        lastParticleId = null;
+        cachedParticle = null;
+        warnedParticle = false;
     }
 
     private static void playArrivalSound(ServerPlayer player) {
@@ -48,7 +63,6 @@ public final class RtpFeedback {
         final float volume = RtpConfig.FEEDBACK_SOUND_VOLUME.get().floatValue();
         final float pitch = RtpConfig.FEEDBACK_SOUND_PITCH.get().floatValue();
 
-        // Player-only (no broadcast)
         player.playNotifySound(sound, SoundSource.PLAYERS, volume, pitch);
     }
 
@@ -61,10 +75,8 @@ public final class RtpFeedback {
         if (!id.isEmpty()) {
             particle = resolveParticle(id);
         }
-
-        // Fallback visible particle if config is invalid / unsupported
         if (particle == null) {
-            particle = ParticleTypes.HAPPY_VILLAGER;
+            particle = ParticleTypes.HAPPY_VILLAGER; // fallback visible
         }
 
         final int count = RtpConfig.FEEDBACK_PARTICLES_COUNT.get();
@@ -72,7 +84,6 @@ public final class RtpFeedback {
 
         final ServerLevel level = player.serverLevel();
 
-        // Center on player eye-ish position (more visible than feet)
         final double x = player.getX();
         final double y = player.getY() + 1.0D;
         final double z = player.getZ();
@@ -82,13 +93,28 @@ public final class RtpFeedback {
         final double dz = RtpConfig.FEEDBACK_PARTICLES_SPREAD_Z.get();
         final double speed = RtpConfig.FEEDBACK_PARTICLES_SPEED.get();
 
-        // Reliable vanilla-style send (broadcast to nearby players, includes the player)
         level.sendParticles(particle, x, y, z, count, dx, dy, dz, speed);
+        RtpLogger.debug(TryckysRTP.LOGGER, "RTP particles sent to {} (type={}, count={})", player.getGameProfile().getName(), particle, count);
+    }
 
-        TryckysRTP.LOGGER.debug(
-                "RTP particles sent: type={}, count={}, pos=({}, {}, {}), spread=({}, {}, {}), speed={}",
-                particle, count, x, y, z, dx, dy, dz, speed
-        );
+    private static void sendArrivalTitle(ServerPlayer player, BlockPos feet) {
+        if (!RtpConfig.TITLE_ENABLED.get()) return;
+        if (RtpMessages.isSilent()) return;
+
+        final String dimId = player.serverLevel().dimension().location().toString();
+
+        final String title = RtpMessages.title(player, feet, dimId);
+        final String subtitle = RtpMessages.subtitle(player, feet, dimId);
+
+        if (title.isEmpty() && subtitle.isEmpty()) return;
+
+        final int fadeIn = Math.max(0, RtpConfig.TITLE_FADE_IN_TICKS.get());
+        final int stay = Math.max(0, RtpConfig.TITLE_STAY_TICKS.get());
+        final int fadeOut = Math.max(0, RtpConfig.TITLE_FADE_OUT_TICKS.get());
+
+        player.connection.send(new ClientboundSetTitlesAnimationPacket(fadeIn, stay, fadeOut));
+        if (!title.isEmpty()) player.connection.send(new ClientboundSetTitleTextPacket(Component.literal(title)));
+        if (!subtitle.isEmpty()) player.connection.send(new ClientboundSetSubtitleTextPacket(Component.literal(subtitle)));
     }
 
     private static SoundEvent resolveSound(String id) {
@@ -105,10 +131,7 @@ public final class RtpFeedback {
 
         if (cachedSound == null && !warnedSound) {
             warnedSound = true;
-            TryckysRTP.LOGGER.warn(
-                    "Invalid feedback.sound.event '{}' (sound not found). Sound feedback disabled for this id.",
-                    id
-            );
+            RtpLogger.warn(TryckysRTP.LOGGER, "Invalid feedback.sound.event '{}' (sound not found).", id);
         }
 
         return cachedSound;
@@ -133,10 +156,7 @@ public final class RtpFeedback {
 
         if (cachedParticle == null && !warnedParticle) {
             warnedParticle = true;
-            TryckysRTP.LOGGER.warn(
-                    "Invalid feedback.particles.type '{}' (particle not found or not a SimpleParticleType). Using fallback 'minecraft:happy_villager'.",
-                    id
-            );
+            RtpLogger.warn(TryckysRTP.LOGGER, "Invalid feedback.particles.type '{}' (not found or not SimpleParticleType). Using fallback.", id);
         }
 
         return cachedParticle;
