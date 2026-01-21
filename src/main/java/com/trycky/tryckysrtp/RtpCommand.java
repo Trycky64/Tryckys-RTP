@@ -35,6 +35,7 @@ public final class RtpCommand {
 
         final ServerLevel level = player.serverLevel();
         final String dimId = level.dimension().location().toString();
+        final String playerName = player.getGameProfile().getName();
 
         // Dimension rules
         if (!RtpSafeTeleport.isRtpAllowedInDimension(level)) {
@@ -71,15 +72,23 @@ public final class RtpCommand {
 
         final RtpSafeTeleport.Result result = RtpSafeTeleport.findSafeDestination(level, player);
         if (!result.success) {
-            player.displayClientMessage(Component.translatable(result.errorKey).withStyle(ChatFormatting.RED), false);
+            // W01: message fail configurable (garde la raison détaillée dans les logs)
+            TryckysRTP.LOGGER.debug("RTP failed for {} in {}: {}", playerName, dimId, result.errorKey);
+            player.displayClientMessage(
+                    Component.literal(RtpMessages.fail(playerName, dimId)).withStyle(ChatFormatting.RED),
+                    false
+            );
             return 0;
         }
 
         try {
             RtpSafeTeleport.teleportPlayer(player, level, result.pos);
         } catch (Exception ex) {
-            TryckysRTP.LOGGER.error("RTP teleport failed for {}", player.getGameProfile().getName(), ex);
-            player.displayClientMessage(Component.translatable("tryckysrtp.rtp.teleport_failed").withStyle(ChatFormatting.RED), false);
+            TryckysRTP.LOGGER.error("RTP teleport failed for {}", playerName, ex);
+            player.displayClientMessage(
+                    Component.literal(RtpMessages.fail(playerName, dimId)).withStyle(ChatFormatting.RED),
+                    false
+            );
             return 0;
         }
 
@@ -90,25 +99,21 @@ public final class RtpCommand {
         final String newDimId = player.serverLevel().dimension().location().toString();
 
         player.displayClientMessage(
-                Component.translatable(
-                        "tryckysrtp.rtp.success",
-                        result.pos.getX(), result.pos.getY(), result.pos.getZ(),
-                        newDimId
-                ).withStyle(ChatFormatting.GREEN),
+                Component.literal(RtpMessages.success(playerName, result.pos, newDimId)).withStyle(ChatFormatting.GREEN),
                 false
         );
 
         if (RtpConfig.LOG_SUCCESS.get()) {
             TryckysRTP.LOGGER.info(
                     "RTP: {} -> ({}, {}, {}) in {}",
-                    player.getGameProfile().getName(),
+                    playerName,
                     result.pos.getX(), result.pos.getY(), result.pos.getZ(),
                     newDimId
             );
         } else {
             TryckysRTP.LOGGER.debug(
                     "RTP success for {} -> ({}, {}, {}) in {}",
-                    player.getGameProfile().getName(),
+                    playerName,
                     result.pos.getX(), result.pos.getY(), result.pos.getZ(),
                     newDimId
             );

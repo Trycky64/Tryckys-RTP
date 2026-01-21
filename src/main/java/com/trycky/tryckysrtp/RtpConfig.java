@@ -123,5 +123,27 @@ public final class RtpConfig {
             )
             .defineInRange("maxCeilingClearance", 32, 0, 512);
 
+    // ---------------------------------------------------------------------
+    // Messages (W01)
+    // ---------------------------------------------------------------------
+    // Placeholders supported:
+    // - %x% %y% %z% : destination coordinates
+    // - %dimension% : destination dimension id (e.g. minecraft:overworld)
+    // - %player%    : player name
+
+    public static final ModConfigSpec.ConfigValue<String> MESSAGE_SUCCESS = BUILDER
+            .comment(
+                    "Message displayed to the player after a successful /rtp.",
+                    "Placeholders: %x% %y% %z% %dimension% %player%"
+            )
+            .define("messages.success", "RTP: %x% %y% %z% (%dimension%)");
+
+    public static final ModConfigSpec.ConfigValue<String> MESSAGE_FAIL = BUILDER
+            .comment(
+                    "Message displayed to the player when /rtp fails.",
+                    "Placeholders: %dimension% %player%"
+            )
+            .define("messages.fail", "RTP impossible.");
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 }
