@@ -3,10 +3,11 @@ package com.trycky.tryckysrtp;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.core.particles.ParticleType;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
@@ -15,9 +16,7 @@ import java.util.Objects;
 
 /**
  * W02: sound & particle feedback on RTP arrival.
- * Safety goals:
- * - Never crash on bad config (skip + warn once per invalid id).
- * - Target only the teleported player (no broadcast).
+ * Goal: reliable visuals on dedicated servers.
  */
 public final class RtpFeedback {
     private RtpFeedback() {}
@@ -57,32 +56,39 @@ public final class RtpFeedback {
         if (!RtpConfig.FEEDBACK_PARTICLES_ENABLED.get()) return;
 
         final String id = Objects.toString(RtpConfig.FEEDBACK_PARTICLES_TYPE.get(), "").trim();
-        if (id.isEmpty()) return;
 
-        final ParticleOptions particle = resolveParticle(id);
-        if (particle == null) return;
+        ParticleOptions particle = null;
+        if (!id.isEmpty()) {
+            particle = resolveParticle(id);
+        }
+
+        // Fallback visible particle if config is invalid / unsupported
+        if (particle == null) {
+            particle = ParticleTypes.HAPPY_VILLAGER;
+        }
 
         final int count = RtpConfig.FEEDBACK_PARTICLES_COUNT.get();
         if (count <= 0) return;
 
-        // Spawn at player center (more reliable than feet pos, avoids being inside blocks)
+        final ServerLevel level = player.serverLevel();
+
+        // Center on player eye-ish position (more visible than feet)
         final double x = player.getX();
-        final double y = player.getY() + 0.8D;
+        final double y = player.getY() + 1.0D;
         final double z = player.getZ();
 
-        final float dx = (float) (double) RtpConfig.FEEDBACK_PARTICLES_SPREAD_X.get();
-        final float dy = (float) (double) RtpConfig.FEEDBACK_PARTICLES_SPREAD_Y.get();
-        final float dz = (float) (double) RtpConfig.FEEDBACK_PARTICLES_SPREAD_Z.get();
-        final float speed = (float) (double) RtpConfig.FEEDBACK_PARTICLES_SPEED.get();
+        final double dx = RtpConfig.FEEDBACK_PARTICLES_SPREAD_X.get();
+        final double dy = RtpConfig.FEEDBACK_PARTICLES_SPREAD_Y.get();
+        final double dz = RtpConfig.FEEDBACK_PARTICLES_SPREAD_Z.get();
+        final double speed = RtpConfig.FEEDBACK_PARTICLES_SPEED.get();
 
-        final boolean force = RtpConfig.FEEDBACK_PARTICLES_FORCE.get();
+        // Reliable vanilla-style send (broadcast to nearby players, includes the player)
+        level.sendParticles(particle, x, y, z, count, dx, dy, dz, speed);
 
-        // Player-only, packet-based (robuste)
-        // Note: client settings can still hide particles if the player disabled them.
-        final ClientboundLevelParticlesPacket pkt =
-                new ClientboundLevelParticlesPacket(particle, force, x, y, z, dx, dy, dz, speed, count);
-
-        player.connection.send(pkt);
+        TryckysRTP.LOGGER.debug(
+                "RTP particles sent: type={}, count={}, pos=({}, {}, {}), spread=({}, {}, {}), speed={}",
+                particle, count, x, y, z, dx, dy, dz, speed
+        );
     }
 
     private static SoundEvent resolveSound(String id) {
@@ -99,7 +105,10 @@ public final class RtpFeedback {
 
         if (cachedSound == null && !warnedSound) {
             warnedSound = true;
-            TryckysRTP.LOGGER.warn("Invalid feedback.sound.event '{}' (sound not found). Sound feedback disabled for this id.", id);
+            TryckysRTP.LOGGER.warn(
+                    "Invalid feedback.sound.event '{}' (sound not found). Sound feedback disabled for this id.",
+                    id
+            );
         }
 
         return cachedSound;
@@ -125,7 +134,7 @@ public final class RtpFeedback {
         if (cachedParticle == null && !warnedParticle) {
             warnedParticle = true;
             TryckysRTP.LOGGER.warn(
-                    "Invalid feedback.particles.type '{}' (particle not found or not a SimpleParticleType). Particle feedback disabled for this id.",
+                    "Invalid feedback.particles.type '{}' (particle not found or not a SimpleParticleType). Using fallback 'minecraft:happy_villager'.",
                     id
             );
         }
